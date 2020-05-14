@@ -1,0 +1,340 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+from typing import List, Optional
+
+import argparse
+import configparser
+import github
+import giturlparse
+import jira
+import os.path
+import subprocess
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="git-lsst")
+    parser.add_argument(
+        "-c",
+        "--config",
+        default="~/.config/git-lsst.conf",
+        type=str,
+        help="config file with Jira auth information",
+    )
+    subparsers = parser.add_subparsers(title="subcommands", dest="subcommand")
+    start_ticket_cmd = subparsers.add_parser(
+        "start-ticket", help="start work on a ticket"
+    )
+
+    start_ticket_cmd.add_argument(
+        "--ticket", help="Key of the ticket to work on (eg 'DM-24500')",
+    )
+
+    subparsers.add_parser(
+        "draft-pr", help="write a draft PR in Github without requesting a review",
+    )
+
+    request_review_cmd = subparsers.add_parser(
+        "request-review", help="request a review of the active ticket's state",
+    )
+    request_review_cmd.add_argument(
+        "--github-reviewer", help="Github username of a reviewer for the PR",
+    )
+    request_review_cmd.add_argument(
+        "--jira-reviewer",
+        help="JIRA username, name, or email of a reviewer for the ticket",
+    )
+
+    merge_cmd = subparsers.add_parser(
+        "merge", help="merge a PR and mark a ticket as done",
+    )
+    merge_cmd.add_argument(
+        "--merge-pr-only",
+        action="store_true",
+        help="Only merge the PR, don't mark the Jira ticket as done",
+    )
+
+    list_cmd = subparsers.add_parser("list", help="list Jira tickets")
+    list_cmd.add_argument(
+        "-S, --status",
+        action="append",
+        dest="statuses",
+        help="only list issues which match this status. Can be specified "
+        + "multiple times, which will list issues that match any of the "
+        + "specified statuses. By default, everything but Done is listed.",
+    )
+    list_cmd.add_argument(
+        "--to-do",
+        action="append_const",
+        dest="statuses",
+        const="To Do",
+        help="alias for --status 'To Do'",
+    )
+    list_cmd.add_argument(
+        "--in-progress",
+        action="append_const",
+        dest="statuses",
+        const="In Progress",
+        help="alias for --status 'In Progress'",
+    )
+    list_cmd.add_argument(
+        "--in-review",
+        action="append_const",
+        dest="statuses",
+        const="In Review",
+        help="alias for --status 'In Review'",
+    )
+    list_cmd.add_argument(
+        "--reviewed",
+        action="append_const",
+        dest="statuses",
+        const="Reviewed",
+        help="alias for --status 'Reviewed'",
+    )
+    list_cmd.add_argument(
+        "--done",
+        action="append_const",
+        dest="statuses",
+        const="Done",
+        help="alias for --status 'Done'",
+    )
+
+    args = parser.parse_args()
+
+    jira_client = connect_jira(args.config)
+    github_client = connect_github(args.config)
+    if args.subcommand == "start-ticket":
+        run_start_ticket_cmd(jira_client, args.ticket)
+
+    elif args.subcommand == "draft-pr":
+        run_draft_pr_cmd(jira_client, draft=True)
+
+    elif args.subcommand == "request-review":
+        run_request_review_cmd(
+            jira_client, github_client, args.github_reviewer, args.jira_reviewer
+        )
+
+    elif args.subcommand == "merge":
+        run_merge_cmd(jira_client, github_client, args.merge_pr_only)
+
+    elif args.subcommand == "list":
+        run_list_cmd(jira_client, args.statuses)
+
+    else:
+        parser.print_help()
+
+
+def connect_jira(config_file: str) -> jira.JIRA:
+    config = configparser.ConfigParser()
+    config.read(os.path.expanduser(config_file))
+    return jira.JIRA(
+        "https://jira.lsstcorp.org/",
+        basic_auth=(config["jira"]["username"], config["jira"]["password"]),
+    )
+
+
+def connect_github(config_file: str) -> github.Github:
+    config = configparser.ConfigParser()
+    config.read(os.path.expanduser(config_file))
+
+    gh_conf = config["github"]
+    if "token" in gh_conf:
+        return github.Github(gh_conf["token"])
+    else:
+        return github.Github(gh_conf["username"], gh_conf["password"])
+
+
+def list_tickets(jira_client: jira.JIRA, statuses: List[str]) -> List[jira.Issue]:
+    query = "assignee=currentUser()"
+    if statuses is not None and len(statuses) > 0:
+        status_filters = " OR ".join([f'status="{s}"' for s in statuses])
+        query += f" AND ({status_filters})"
+    else:
+        query += " AND status!=\"Done\" AND status!=\"Adopted\""
+
+    issues = jira_client.search_issues(query)
+    issues = sorted(issues, key=lambda x: x.fields.status.name + x.key)
+    return issues
+
+
+def get_issue(jira_client: jira.JIRA, ticket_id: str) -> jira.Issue:
+    return jira_client.issue(ticket_id)
+
+
+def run_list_cmd(jira_client: jira.JIRA, statuses: List[str]):
+    issues = list_tickets(jira_client, statuses)
+    for issue in issues:
+        print(f"{issue.key} - {issue.fields.status.name} - {issue.fields.summary}")
+
+
+def run_start_ticket_cmd(jira_client: jira.JIRA, ticket_id: Optional[str] = None):
+    if ticket_id is None:
+        issues = list_tickets(
+            jira_client, ["To Do", "In Progress", "In Review", "Reviewed"]
+        )
+        for i, issue in enumerate(issues):
+            print(
+                f"[{i}]\t{issue.key} - {issue.fields.status.name} - {issue.fields.summary}"
+            )
+        choice = input("Choose an issue to work on: ")
+        chosen = dict(enumerate(issues))[int(choice)]
+        ticket_id = f"tickets/{chosen.key}"
+    branch_name = f"{ticket_id}"
+    git("checkout", "master")
+    git("fetch")
+    git("pull", "origin", "master")
+    git("checkout", "-b", branch_name)
+    git("push", "origin", branch_name)
+
+
+def current_branch_name() -> str:
+    return git_output("rev-parse", "--abbrev-ref", "HEAD")
+
+
+def current_repo() -> str:
+    raw_url = git_output("remote", "get-url", "origin")
+    parsed = giturlparse.parse(raw_url)
+    return parsed.owner + "/" + parsed.name
+
+
+def current_ticket() -> str:
+    prefix, ticket_id = current_branch_name().split("/", 1)
+    assert prefix == "tickets"
+    return ticket_id.strip()
+
+
+def get_reviewer_field_id(jira_client: jira.JIRA) -> str:
+    fields = jira_client.fields()
+    for f in fields:
+        if f.get("name") == "Reviewers":
+            return f.get("id", "UNKNOWN")
+    return "UNKNOWN"
+
+
+def get_jira_user(jira_client: jira.JIRA, name: str) -> jira.User:
+    jira_users = list(jira_client.search_users(name))
+    if len(jira_users) == 0:
+        raise ValueError(f"No users found in Jira that match {name}")
+    if len(jira_users) == 1:
+        return jira_users[0]
+    if len(jira_users) > 1:
+        enumerated = enumerate(sorted(jira_users, key=lambda x: x.key))
+        print("Multiple Jira users match as reviewer, choose one:")
+        for i, u in enumerated:
+            active_str = "Active" if u.active else "Inactive"
+            print(f"[{i}] - {u.displayName} {u.key} {u.email} {active_str}")
+        choice = input("Pick a user by number: ")
+        chosen = dict(enumerated)[int(choice)]
+        return chosen
+
+
+def set_jira_reviewer(
+    jira_client: jira.JIRA, issue: jira.Issue, reviewer: jira.User
+) -> None:
+    reviewer_field_id = get_reviewer_field_id(jira_client)
+    issue.update(
+        fields={
+            reviewer_field_id: [{"id": reviewer.id}],
+            "status": "In Review",
+        }
+    )
+
+
+def run_request_review_cmd(
+    jira_client: jira.JIRA,
+    github_client: github.Github,
+    gh_reviewer: str,
+    jira_reviewer: str,
+):
+    ticket_id = current_ticket()
+    issue = get_issue(jira_client, ticket_id)
+    jira_user = get_jira_user(jira_client, jira_reviewer)
+    set_jira_reviewer(jira_client, issue, jira_user)
+
+    repo_name = current_repo()
+    # TODO: Double check that user is a part of LSST
+    repo = github_client.get_repo(repo_name)
+    prs = list(repo.get_pulls(head=current_branch_name()))
+    if len(prs) == 0:
+        pr(issue, reviewer=gh_reviewer, draft=False)
+    elif len(prs) == 1:
+        prs[0].create_review_request(reviewers=gh_reviewer)
+        print(f"Assigned {gh_reviewer} to review {prs[0]}")
+    else:
+        raise ValueError("Multiple PRs are open for this ticket")
+
+
+def run_draft_pr_cmd(jira_client: jira.JIRA, draft: bool = True):
+    ticket_id = current_ticket()
+    issue = get_issue(jira_client, ticket_id)
+    pr(issue, draft=draft)
+
+
+def run_merge_cmd(
+    jira_client: jira.JIRA, gh_client: github.Github, merge_pr_only: bool = False
+):
+    # TODO: Check that PR has been approved
+    ticket_branch = current_branch_name()
+    ticket_id = current_ticket()
+    git("checkout", "master")
+    git("merge", "--no-ff", ticket_branch)
+    git("push", "origin", "master")
+
+    if not merge_pr_only:
+        issue = get_issue(jira_client, ticket_id)
+        issue.update(fields={"status": "Done"})
+
+
+def pr(issue: jira.Issue, reviewer: Optional[str] = None, draft: bool = False):
+    args = [
+        "pull-request",
+        "--edit",
+        "--base",
+        "master",
+        "--head",
+        current_branch_name(),
+        "--message",
+        pr_message(issue),
+    ]
+    if draft:
+        args.append("--draft")
+    if reviewer is not None:
+        args.extend(["--reviewer", reviewer])
+    hub(*args)
+
+
+def pr_message(jira_issue):
+    return f"""{jira_issue.key}: {jira_issue.fields.summary}
+
+#### Ticket link: [{jira_issue.key}|{jira_issue.permalink()}]
+
+#### Ticket Description:
+{jira_issue.fields.description}
+---
+"""
+
+
+def hub(*args):
+    subprocess.run(["hub"] + list(args), check=True)
+
+
+def hub_output(*args):
+    done = subprocess.run(
+        ["hub"] + list(args), capture_output=True, check=True, text=True
+    )
+    return done.stdout
+
+
+def git(*args):
+    subprocess.run(["git"] + list(args), check=True)
+
+
+def git_output(*args) -> str:
+    done = subprocess.run(
+        ["git"] + list(args), capture_output=True, check=True, text=True
+    )
+    return done.stdout
+
+
+if __name__ == "__main__":
+    main()
