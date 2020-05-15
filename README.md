@@ -24,59 +24,44 @@ prefer.
 
 ## Usage
 
-Start work on a ticket with `git lsst start-ticket --ticket=<ID>`, eg `git lsst start-ticket --ticket=DM-24500`.
+* **List tickets to work on** with `git lsst list`.
 
-Ask for a review with `git lsst request-review`, eg
+* **Start work on a ticket** with `git lsst start-ticket --ticket=<ID>`, eg `git lsst start-ticket --ticket=DM-24500`.
 
-Basic command:
-```
--> % git lsst
-usage: git-lsst [-h] [-c CONFIG]
-                {start-ticket,draft-pr,request-review,merge,list}
-                ...
+* **Ship a draft of a PR** with `git lsst draft-pr`.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -c CONFIG, --config CONFIG
-                        config file with Jira auth information
+* **Ask for a review** with `git lsst request-review --jira-reviewer=<username>
+  --github-reviewer=<username>`. *TODO: help out by letting user just specify
+  one of these two*
 
-subcommands:
-  {start-ticket,draft-pr,request-review,merge,list}
-    start-ticket        start work on a ticket
-    draft-pr            write a draft PR in Github without
-                        requesting a review
-    request-review      request a review of the active ticket's
-                        state
-    merge               merge a PR and mark a ticket as done
-    list                list Jira tickets
-```
+* **Merge and mark a ticket as done** with `git lsst merge`.
 
-### List Jira tickets you're assigned to
-```
--> % git lsst list --help
-usage: git-lsst list [-h] [-S, --status STATUSES] [--to-do]
-                     [--in-progress] [--in-review] [--reviewed]
-                     [--done]
+### `git lsst list`
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -S, --status STATUSES
-                        only list issues which match this status.
-                        Can be specified multiple times, which will
-                        list issues that match any of the specified
-                        statuses. By default, everything but Done is
-                        listed.
-  --to-do               alias for --status 'To Do'
-  --in-progress         alias for --status 'In Progress'
-  --in-review           alias for --status 'In Review'
-  --reviewed            alias for --status 'Reviewed'
-  --done                alias for --status 'Done'
-```
+This command will list tickets that you're assigned to. You can filter by status
+with `--status`, which can be specified multiple times. `--to-do`,
+`--in-progress`, `--in-review`, `--reviewed`, and `--done` are short aliases for
+`--status`.
 
-#### List tickets in progress
+### `git lsst start-ticket`
 
-```
--> % git lsst list --in-progress
-DM-24644 - In Progress - Provide a distributable package for the alert stream simulator
-DM-24649 - In Progress - Add integration tests to alert stream simulator
-```
+This command will create a new branch named `tickets/<ticket-id>` and push it.
+It will transition the Jira issue to "In Progress."
+
+### `git lsst draft-pr`
+
+### `git lsst request-reviewer`
+
+This command will transition current ticket (based on parsing the branch) to `In
+Review`, setting the reviewer based on the `--jira-reviewer` argument. That
+argument is used as a search string, so it can be a name, email, or username. If
+there are multiple matches, you'll be prompted to select one.
+
+It will also create a new PR if one doesn't exist for this ticket. It will
+request a Github review from by `--github-reviewer`; this argument must be a
+github username.
+
+### `git lsst merge`
+
+This command will perform a `--no-ff` merge into the `master` branch of the
+current ticket, and it will transition the associated Jira ticket to "Done".
