@@ -186,6 +186,8 @@ def run_start_ticket_cmd(jira_client: jira.JIRA, ticket_id: Optional[str] = None
     git("checkout", "-b", branch_name)
     git("push", "origin", branch_name)
 
+    jira_client.transition_issue(ticket_id, "In Progress")
+
 
 def current_branch_name() -> str:
     return git_output("rev-parse", "--abbrev-ref", "HEAD")
@@ -201,14 +203,6 @@ def current_ticket() -> str:
     prefix, ticket_id = current_branch_name().split("/", 1)
     assert prefix == "tickets"
     return ticket_id.strip()
-
-
-def get_reviewer_field_id(jira_client: jira.JIRA) -> str:
-    fields = jira_client.fields()
-    for f in fields:
-        if f.get("name") == "Reviewers":
-            return f.get("id", "UNKNOWN")
-    return "UNKNOWN"
 
 
 def get_jira_user(jira_client: jira.JIRA, name: str) -> jira.User:
@@ -231,12 +225,27 @@ def get_jira_user(jira_client: jira.JIRA, name: str) -> jira.User:
 def set_jira_reviewer(
     jira_client: jira.JIRA, issue: jira.Issue, reviewer: jira.User
 ) -> None:
-    reviewer_field_id = get_reviewer_field_id(jira_client)
-    issue.update(
-        fields={
-            reviewer_field_id: [{"id": reviewer.id}],
-            "status": "In Review",
-        }
+
+    transitions = jira_client.transitions(issue, expand="transitions.fields")
+    for t in transitions:
+        if t['name'] == 'Ask For Review':
+            ask_for_review_transition = t
+            break
+    else:
+        transition_names = [t['name'] for t in transitions]
+        raise ValueError(f"ticket {issue.id} doesn't have an 'Ask For Review' transition from its current state, it only has {transition_names}")
+
+    for field_id, field in ask_for_review_transition['fields']:
+        if field['name'] == 'Reviewers':
+            reviewer_field_id = field_id
+            break
+    else:
+        field_names = [f['name'] for f in ask_for_review_transition['fields']]
+        raise ValueError(f"cannot find 'Reviewers' field when transitioning to 'Ask For Review' state, only found {field_names}")
+
+    jira_client.transition_issue(
+        issue.id, ask_for_review_transition['id'],
+        fields={reviewer_field_id:[{"id": reviewer.id}]},
     )
 
 
@@ -281,8 +290,7 @@ def run_merge_cmd(
     git("push", "origin", "master")
 
     if not merge_pr_only:
-        issue = get_issue(jira_client, ticket_id)
-        issue.update(fields={"status": "Done"})
+        jira_client.transition_issue(ticket_id, "Done")
 
 
 def pr(issue: jira.Issue, reviewer: Optional[str] = None, draft: bool = False):
