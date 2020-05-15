@@ -10,6 +10,7 @@ import giturlparse
 import jira
 import os.path
 import subprocess
+import tempfile
 
 
 def main():
@@ -27,7 +28,9 @@ def main():
     )
 
     start_ticket_cmd.add_argument(
-        "--ticket", help="Key of the ticket to work on (eg 'DM-24500')",
+        "--ticket",
+        help="Key of the ticket to work on (eg 'DM-24500')",
+        required=True,
     )
 
     subparsers.add_parser(
@@ -38,11 +41,14 @@ def main():
         "request-review", help="request a review of the active ticket's state",
     )
     request_review_cmd.add_argument(
-        "--github-reviewer", help="Github username of a reviewer for the PR",
+        "--github-reviewer",
+        help="Github username of a reviewer for the PR",
+        required=True,
     )
     request_review_cmd.add_argument(
         "--jira-reviewer",
         help="JIRA username, name, or email of a reviewer for the ticket",
+        required=True,
     )
 
     merge_cmd = subparsers.add_parser(
@@ -50,8 +56,8 @@ def main():
     )
     merge_cmd.add_argument(
         "--merge-pr-only",
-        action="store_true",
         help="Only merge the PR, don't mark the Jira ticket as done",
+        action="store_true",
     )
 
     list_cmd = subparsers.add_parser("list", help="list Jira tickets")
@@ -107,7 +113,7 @@ def main():
         run_start_ticket_cmd(jira_client, args.ticket)
 
     elif args.subcommand == "draft-pr":
-        run_draft_pr_cmd(jira_client, draft=True)
+        run_draft_pr_cmd(jira_client, github_client, draft=True)
 
     elif args.subcommand == "request-review":
         run_request_review_cmd(
@@ -190,13 +196,13 @@ def run_start_ticket_cmd(jira_client: jira.JIRA, ticket_id: Optional[str] = None
 
 
 def current_branch_name() -> str:
-    return git_output("rev-parse", "--abbrev-ref", "HEAD")
+    return git_output("rev-parse", "--abbrev-ref", "HEAD").strip()
 
 
 def current_repo() -> str:
     raw_url = git_output("remote", "get-url", "origin")
     parsed = giturlparse.parse(raw_url)
-    return parsed.owner + "/" + parsed.name
+    return parsed.owner + "/" + parsed.repo
 
 
 def current_ticket() -> str:
@@ -265,18 +271,20 @@ def run_request_review_cmd(
     repo = github_client.get_repo(repo_name)
     prs = list(repo.get_pulls(head=current_branch_name()))
     if len(prs) == 0:
-        pr(issue, reviewer=gh_reviewer, draft=False)
+        pr = pr(github_client, issue, reviewer=gh_reviewer, draft=False)
     elif len(prs) == 1:
-        prs[0].create_review_request(reviewers=gh_reviewer)
-        print(f"Assigned {gh_reviewer} to review {prs[0]}")
+        pr = prs[0]
     else:
         raise ValueError("Multiple PRs are open for this ticket")
 
+    pr.create_review_request(reviewers=gh_reviewer)
+    print(f"Assigned {gh_reviewer} to review {prs[0]}")
 
-def run_draft_pr_cmd(jira_client: jira.JIRA, draft: bool = True):
+
+def run_draft_pr_cmd(jira_client: jira.JIRA, github_client: github.Github, draft: bool = True):
     ticket_id = current_ticket()
     issue = get_issue(jira_client, ticket_id)
-    pr(issue, draft=draft)
+    pr(github_client, issue, draft=draft)
 
 
 def run_merge_cmd(
@@ -293,44 +301,61 @@ def run_merge_cmd(
         jira_client.transition_issue(ticket_id, "Done")
 
 
-def pr(issue: jira.Issue, reviewer: Optional[str] = None, draft: bool = False):
-    args = [
-        "pull-request",
-        "--edit",
-        "--base",
-        "master",
-        "--head",
-        current_branch_name(),
-        "--message",
-        pr_message(issue),
-    ]
-    if draft:
-        args.append("--draft")
-    if reviewer is not None:
-        args.extend(["--reviewer", reviewer])
-    hub(*args)
+def pr(github_client: github.Github, issue: jira.Issue, draft: bool = False) -> github.PullRequest:
+    repo_name = current_repo()
+    repo = github_client.get_repo(repo_name)
+
+    message = editor(pr_message_template(issue)).strip()
+
+    if len(message) == 0:
+        print("got an empty message, aborting")
+        sys.exit(1)
+    split_message = message.splitlines()
+    title = split_message[0]
+    if len(title) == 0:
+        print("got an empty title, aborting")
+        sys.exit(1)
+
+    # Trim out leading empty lines
+    message_start_line = 1
+    for line in split_message[1:]:
+        if line.strip() == "":
+            message_start_line += 1
+        else:
+            break
+    body = "\n".join(split_message[message_start_line:])
+
+    print("creating a pull, titl=" + title)
+    print("creating a pull, head=" + current_branch_name())
+    print("creating a pull, base=master")
+    return repo.create_pull(
+        title=title,
+        body=body,
+        head=current_branch_name(),
+        base="master",
+        draft=draft,
+    )
 
 
-def pr_message(jira_issue):
+def pr_message_template(jira_issue):
     return f"""{jira_issue.key}: {jira_issue.fields.summary}
 
-#### Ticket link: [{jira_issue.key}|{jira_issue.permalink()}]
+#### Ticket:
+[{jira_issue.key}]({jira_issue.permalink()})
 
-#### Ticket Description:
 {jira_issue.fields.description}
----
 """
 
 
-def hub(*args):
-    subprocess.run(["hub"] + list(args), check=True)
-
-
-def hub_output(*args):
-    done = subprocess.run(
-        ["hub"] + list(args), capture_output=True, check=True, text=True
-    )
-    return done.stdout
+def editor(template: str) -> str:
+    """Open 'template' in EDITOR, and return the edited value."""
+    editor = os.environ.get("EDITOR", "vim")
+    with tempfile.NamedTemporaryFile(suffix=".tmp", mode="w+") as f:
+        f.write(template)
+        f.flush()
+        subprocess.run(editor + " " + f.name, shell=True, check=True)
+        f.seek(0)
+        return f.read()
 
 
 def git(*args):
