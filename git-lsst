@@ -266,6 +266,8 @@ def run_request_review_cmd(
     jira_user = get_jira_user(jira_client, jira_reviewer)
     set_jira_reviewer(jira_client, issue, jira_user)
 
+    git("push", "origin", current_branch_name())
+
     repo_name = current_repo()
     # TODO: Double check that user is a part of LSST
     repo = github_client.get_repo(repo_name)
@@ -277,14 +279,17 @@ def run_request_review_cmd(
     else:
         raise ValueError("Multiple PRs are open for this ticket")
 
+    print(f"PR created: {pr.html_url}")
     pr.create_review_request(reviewers=gh_reviewer)
-    print(f"Assigned {gh_reviewer} to review {prs[0]}")
+    print(f"Assigned {gh_reviewer} to review {pr}")
 
 
 def run_draft_pr_cmd(jira_client: jira.JIRA, github_client: github.Github, draft: bool = True):
     ticket_id = current_ticket()
     issue = get_issue(jira_client, ticket_id)
-    pr(github_client, issue, draft=draft)
+    git("push", "origin", current_branch_name())
+    pr = pr(github_client, issue, draft=draft)
+    print(f"PR created: {pr.html_url}")
 
 
 def run_merge_cmd(
@@ -325,9 +330,6 @@ def pr(github_client: github.Github, issue: jira.Issue, draft: bool = False) -> 
             break
     body = "\n".join(split_message[message_start_line:])
 
-    print("creating a pull, titl=" + title)
-    print("creating a pull, head=" + current_branch_name())
-    print("creating a pull, base=master")
     return repo.create_pull(
         title=title,
         body=body,
