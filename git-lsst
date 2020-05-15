@@ -184,14 +184,15 @@ def run_start_ticket_cmd(jira_client: jira.JIRA, ticket_id: Optional[str] = None
             )
         choice = input("Choose an issue to work on: ")
         chosen = dict(enumerate(issues))[int(choice)]
-        ticket_id = f"tickets/{chosen.key}"
-    branch_name = f"{ticket_id}"
+        ticket_id = f"{chosen.key}"
+    branch_name = f"tickets/{ticket_id}"
     git("checkout", "master")
     git("fetch")
     git("pull", "origin", "master")
     git("checkout", "-b", branch_name)
     git("push", "origin", branch_name)
-
+    print()
+    print("jira: marking ticket {ticket_id} as 'In Progress'")
     jira_client.transition_issue(ticket_id, "In Progress")
 
 
