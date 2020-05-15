@@ -36,21 +36,24 @@ prefer.
 
 * **Merge and mark a ticket as done** with `git lsst merge`.
 
-### `git lsst list`
+#### `git lsst list`
 
 This command will list tickets that you're assigned to. You can filter by status
 with `--status`, which can be specified multiple times. `--to-do`,
 `--in-progress`, `--in-review`, `--reviewed`, and `--done` are short aliases for
 `--status`.
 
-### `git lsst start-ticket`
+#### `git lsst start-ticket`
 
 This command will create a new branch named `tickets/<ticket-id>` and push it.
 It will transition the Jira issue to "In Progress."
 
-### `git lsst draft-pr`
+#### `git lsst draft-pr`
 
-### `git lsst request-reviewer`
+This command will create a pull request for current ticket, but won't assign a
+reviewer. It will be marked as a draft.
+
+#### `git lsst request-reviewer`
 
 This command will transition current ticket (based on parsing the branch) to `In
 Review`, setting the reviewer based on the `--jira-reviewer` argument. That
@@ -61,7 +64,7 @@ It will also create a new PR if one doesn't exist for this ticket. It will
 request a Github review from by `--github-reviewer`; this argument must be a
 github username.
 
-### `git lsst merge`
+#### `git lsst merge`
 
 This command will perform a `--no-ff` merge into the `master` branch of the
 current ticket, and it will transition the associated Jira ticket to "Done".
