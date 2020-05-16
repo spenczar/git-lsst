@@ -282,8 +282,9 @@ def set_jira_reviewer(
         raise ValueError(f"cannot find 'Reviewers' field when transitioning to 'Ask For Review' state, only found {field_names}")
 
     jira_client.transition_issue(
-        issue.id, ask_for_review_transition['id'],
-        fields={reviewer_field_id:[{"id": reviewer.id}]},
+        issue.id,
+        ask_for_review_transition['id'],
+        fields={reviewer_field_id:[{"name": reviewer.name}]},
     )
 
 
@@ -293,12 +294,12 @@ def run_request_review_cmd(
     gh_reviewer: str,
     jira_reviewer: str,
 ):
+    git("push", "origin", current_branch_name())
+
     ticket_id = current_ticket()
     issue = get_issue(jira_client, ticket_id)
     jira_user = get_jira_user(jira_client, jira_reviewer)
     set_jira_reviewer(jira_client, issue, jira_user)
-
-    git("push", "origin", current_branch_name())
 
     repo_name = current_repo()
     # TODO: Double check that user is a part of LSST
