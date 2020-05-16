@@ -23,6 +23,33 @@ def main():
         help="config file with Jira auth information",
     )
     subparsers = parser.add_subparsers(title="subcommands", dest="subcommand")
+
+    create_ticket_cmd = subparsers.add_parser(
+        "create-ticket", help="create a new ticket",
+    )
+    create_ticket_cmd.add_argument(
+        "--summary", help="text summary for the ticket"
+    )
+    create_ticket_cmd.add_argument(
+        "--description", help="full description in the ticket",
+    )
+    create_ticket_cmd.add_argument(
+        "--project",
+        default="DM",
+        help="ID of the project to create a ticket under"
+    )
+    create_ticket_cmd.add_argument(
+        "--component",
+        help="name of a component to reference in the ticket",
+    )
+    create_ticket_cmd.add_argument(
+        "--assignee",
+        help="name of the user to assign (default: assign yourself)",
+    )
+    create_ticket_cmd.add_argument(
+        "--story-points", type=float, help="number of story points for the ticket"
+    )
+
     start_ticket_cmd = subparsers.add_parser(
         "start-ticket", help="start work on a ticket"
     )
@@ -109,7 +136,11 @@ def main():
 
     jira_client = connect_jira(args.config)
     github_client = connect_github(args.config)
-    if args.subcommand == "start-ticket":
+    if args.subcommand == "create-ticket":
+        run_create_ticket_cmd(jira_client, args.summary, args.description,
+                              args.project, args.assignee,
+                              args.component, args.story_points)
+    elif args.subcommand == "start-ticket":
         run_start_ticket_cmd(jira_client, args.ticket)
 
     elif args.subcommand == "draft-pr":
@@ -192,7 +223,7 @@ def run_start_ticket_cmd(jira_client: jira.JIRA, ticket_id: Optional[str] = None
     git("checkout", "-b", branch_name)
     git("push", "origin", branch_name)
     print()
-    print("jira: marking ticket {ticket_id} as 'In Progress'")
+    print(f"marking ticket {ticket_id} as 'In Progress'")
     jira_client.transition_issue(ticket_id, "In Progress")
 
 
@@ -274,7 +305,7 @@ def run_request_review_cmd(
     repo = github_client.get_repo(repo_name)
     prs = list(repo.get_pulls(head=current_branch_name()))
     if len(prs) == 0:
-        pr = pr(github_client, issue, reviewer=gh_reviewer, draft=False)
+        pr = send_pr(github_client, issue, reviewer=gh_reviewer, draft=False)
     elif len(prs) == 1:
         pr = prs[0]
     else:
@@ -289,7 +320,7 @@ def run_draft_pr_cmd(jira_client: jira.JIRA, github_client: github.Github, draft
     ticket_id = current_ticket()
     issue = get_issue(jira_client, ticket_id)
     git("push", "origin", current_branch_name())
-    pr = pr(github_client, issue, draft=draft)
+    pr = send_pr(github_client, issue, draft=draft)
     print(f"PR created: {pr.html_url}")
 
 
@@ -307,7 +338,7 @@ def run_merge_cmd(
         jira_client.transition_issue(ticket_id, "Done")
 
 
-def pr(github_client: github.Github, issue: jira.Issue, draft: bool = False) -> github.PullRequest:
+def send_pr(github_client: github.Github, issue: jira.Issue, draft: bool = False) -> github.PullRequest:
     repo_name = current_repo()
     repo = github_client.get_repo(repo_name)
 
@@ -347,6 +378,67 @@ def pr_message_template(jira_issue):
 [{jira_issue.key}]({jira_issue.permalink()})
 
 {jira_issue.fields.description}
+"""
+
+
+def run_create_ticket_cmd(jira_client: jira.JIRA, summary: str, description: str,
+                          project: str, assignee: str, component: str, story_points: float):
+    if assignee is None:
+        assignee = jira_client.current_user()
+    tpl = new_issue_template(summary, description, project, assignee, story_points, component)
+
+    issue = editor(tpl)
+
+    rawmeta, rawbody = issue.split("---", 1)
+
+    config = configparser.ConfigParser()
+    config.read_string(rawmeta)
+    meta = config["meta"]
+
+    split_body = rawbody.splitlines()
+    print(split_body)
+
+    # Trim out leading empty lines
+    message_start_line = 0
+    for line in split_body:
+        if line.strip() == "":
+            message_start_line += 1
+        else:
+            break
+    split_body = split_body[message_start_line:]
+
+    summary = split_body[0].strip()
+    description = ("\n".join(split_body[1:])).strip()
+
+    fields = {
+        "project": meta["project"],
+        "issuetype": meta["issuetype"],
+        "assignee": {"name": meta["assignee"]},
+        "customfield_10202": float(meta["storypoints"]),
+        "components": [{"name": meta["component"]}],
+        "summary": summary,
+        "description": description,
+    }
+    issue = jira_client.create_issue(fields)
+    print(f"issue created: https://jira.lsstcorp.org/browse/{issue.key}")
+
+
+def new_issue_template(summary: str, description: str, project: str,
+                       assignee: str, points: float, component: str) -> str:
+    if summary is None:
+        summary = "[One-line summary here]"
+    if description is None:
+        description = "[Full description here]"
+    return f"""[meta]
+project={project}
+issuetype=Story
+assignee={assignee or ""}
+storypoints={points or ""}
+component={component or ""}
+---
+[One-line summary here]
+
+[Full description here]
 """
 
 
