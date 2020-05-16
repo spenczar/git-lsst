@@ -273,7 +273,7 @@ def set_jira_reviewer(
         transition_names = [t['name'] for t in transitions]
         raise ValueError(f"ticket {issue.id} doesn't have an 'Ask For Review' transition from its current state, it only has {transition_names}")
 
-    for field_id, field in ask_for_review_transition['fields']:
+    for field_id, field in ask_for_review_transition['fields'].items():
         if field['name'] == 'Reviewers':
             reviewer_field_id = field_id
             break
