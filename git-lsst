@@ -426,10 +426,6 @@ def run_create_ticket_cmd(jira_client: jira.JIRA, summary: str, description: str
 
 def new_issue_template(summary: str, description: str, project: str,
                        assignee: str, points: float, component: str) -> str:
-    if summary is None:
-        summary = "[One-line summary here]"
-    if description is None:
-        description = "[Full description here]"
     return f"""[meta]
 project={project}
 issuetype=Story
@@ -437,9 +433,9 @@ assignee={assignee or ""}
 storypoints={points or ""}
 component={component or ""}
 ---
-[One-line summary here]
+{summary or "[One-line summary here]"}
 
-[Full description here]
+{description or "[Full description here]"}
 """
 
 
