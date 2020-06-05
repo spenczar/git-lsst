@@ -313,7 +313,7 @@ def run_request_review_cmd(
         raise ValueError("Multiple PRs are open for this ticket")
 
     print(f"PR created: {pr.html_url}")
-    pr.create_review_request(reviewers=gh_reviewer)
+    pr.create_review_request(reviewers=[gh_reviewer])
     print(f"Assigned {gh_reviewer} to review {pr}")
 
 
@@ -328,6 +328,15 @@ def run_draft_pr_cmd(jira_client: jira.JIRA, github_client: github.Github, draft
 def run_merge_cmd(
     jira_client: jira.JIRA, gh_client: github.Github, merge_pr_only: bool = False
 ):
+    print("Did you remember to test this in Jenkins, if appropriate?")
+    response = input("y/n")
+    if response != "y" and response != "n":
+        print("Please respond with 'y' or 'n'.")
+        sys.exit(1)
+    if response == "n":
+        print("Go to https://developer.lsst.io/stack/jenkins-stack-os-matrix.html")
+        sys.exit(1)
+
     # TODO: Check that PR has been approved
     ticket_branch = current_branch_name()
     ticket_id = current_ticket()
