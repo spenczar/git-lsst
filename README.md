@@ -4,7 +4,10 @@ This is a set of extensions to `git` for working on the LSST project.
 
 ## Installation
 
-Clone this repo, and then `pip install .` inside it.
+Use pip:
+```
+pip install git-lsst
+```
 
 Then, make a config file with credentials at `~/.config/git-lsst.conf`. The file
 should look like this:
