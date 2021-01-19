@@ -306,11 +306,11 @@ def run_request_review_cmd(
     repo = github_client.get_repo(repo_name)
     prs = list(repo.get_pulls(head=current_branch_name()))
     if len(prs) == 0:
-        pr = send_pr(github_client, issue, reviewer=gh_reviewer, draft=False)
+        pr = send_pr(github_client, issue, draft=False)
     elif len(prs) == 1:
         pr = prs[0]
     else:
-        raise ValueError("Multiple PRs are open for this ticket")
+        raise ValueError("Multiple PRs are open for this ticket:")
 
     print(f"PR created: {pr.html_url}")
     pr.create_review_request(reviewers=[gh_reviewer])
